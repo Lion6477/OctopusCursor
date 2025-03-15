@@ -196,78 +196,82 @@ namespace TentacleOverlay
         }
 
         private void UpdateTentacles(object sender, EventArgs e)
-    {
-        // Обновление скорости мыши
-        PointF currentMousePos = Cursor.Position;
-        DateTime currentTime = DateTime.Now;
-        float deltaTime = (float)(currentTime - lastUpdateTime).TotalSeconds;
-
-        // Определяем, движется ли мышь
-        bool wasPreviouslyMoving = isMouseMoving;
-        isMouseMoving = !(currentMousePos.X == lastMousePos.X && currentMousePos.Y == lastMousePos.Y);
-
-        if (deltaTime > 0)
         {
-            // Плавное сглаживание при быстрых движениях
-            float smoothFactor = Math.Min(0.7f, deltaTime * 10f);
-            float inputFactor = 1 - smoothFactor;
+            // Обновление скорости мыши
+            PointF currentMousePos = Cursor.Position;
+            DateTime currentTime = DateTime.Now;
+            float deltaTime = (float)(currentTime - lastUpdateTime).TotalSeconds;
+
+            // Определяем, движется ли мышь
+            bool wasPreviouslyMoving = isMouseMoving;
+            isMouseMoving = !(currentMousePos.X == lastMousePos.X && currentMousePos.Y == lastMousePos.Y);
+
+            if (deltaTime > 0)
+            {
+                // Плавное сглаживание при быстрых движениях
+                float smoothFactor = Math.Min(0.7f, deltaTime * 10f);
+                float inputFactor = 1 - smoothFactor;
+                
+                mouseVelocity.X = (currentMousePos.X - lastMousePos.X) / deltaTime * inputFactor + mouseVelocity.X * smoothFactor;
+                mouseVelocity.Y = (currentMousePos.Y - lastMousePos.Y) / deltaTime * inputFactor + mouseVelocity.Y * smoothFactor;
+            }
+
+            // Если мышь не двигается, обнуляем скорость
+            if (!isMouseMoving)
+            {
+                mouseVelocity.X *= 0.95f; // Плавное затухание
+                mouseVelocity.Y *= 0.95f;
+
+                // Если скорость меньше порога, считаем что движения нет
+                if (Math.Abs(mouseVelocity.X) < 0.1f && Math.Abs(mouseVelocity.Y) < 0.1f)
+                {
+                    mouseVelocity.X = 0;
+                    mouseVelocity.Y = 0;
+                }
+            }
+
+            lastMousePos = currentMousePos;
+            lastUpdateTime = currentTime;
+
+            // Расчет скорости курсора
+            float speed = (float)Math.Sqrt(mouseVelocity.X * mouseVelocity.X + mouseVelocity.Y * mouseVelocity.Y);
             
-            mouseVelocity.X = (currentMousePos.X - lastMousePos.X) / deltaTime * inputFactor + mouseVelocity.X * smoothFactor;
-            mouseVelocity.Y = (currentMousePos.Y - lastMousePos.Y) / deltaTime * inputFactor + mouseVelocity.Y * smoothFactor;
-        }
+            // Адаптивное прогнозирование - чем выше скорость, тем меньше время прогноза
+            float adaptivePredictionFactor = 1.0f / (1.0f + speed * 0.005f);
+            float effectivePredictionTime = PredictionTimeMs * adaptivePredictionFactor;
+            
+            // Ограничение дистанции предсказания
+            float predictDistance = Math.Min(speed * (effectivePredictionTime / 1000f), MaxGrabDistance * 0.7f);
 
-        // Если мышь не двигается, обнуляем скорость
-        if (!isMouseMoving)
-        {
-            mouseVelocity.X *= 0.95f; // Плавное затухание
-            mouseVelocity.Y *= 0.95f;
+            // Прогнозируемая позиция с учетом направления
+            float directionX = speed > 0.1f ? mouseVelocity.X / speed : 0;
+            float directionY = speed > 0.1f ? mouseVelocity.Y / speed : 0;
 
-            // Если скорость меньше порога, считаем что движения нет
-            if (Math.Abs(mouseVelocity.X) < 0.1f && Math.Abs(mouseVelocity.Y) < 0.1f)
+            // Используем вектор направления для прогнозирования позиции впереди курсора
+            PointF predictedPos = new PointF(
+                currentMousePos.X + directionX * predictDistance,
+                currentMousePos.Y + directionY * predictDistance
+            );
+
+            // Обновление щупалец
+            for (int i = 0; i < SegmentCount; i++)
             {
-                mouseVelocity.X = 0;
-                mouseVelocity.Y = 0;
-            }
-        }
+                // Проверка расстояния до точки захвата
+                float distToTarget = Distance(currentMousePos, targetPoints[i]);
 
-        lastMousePos = currentMousePos;
-        lastUpdateTime = currentTime;
+                // Выбираем новую точку захвата при определенных условиях
+                if (distToTarget > DetachDistance || 
+                    (speed > 20 && isMouseMoving && !wasPreviouslyMoving))
+                {
+                    targetPoints[i] = GetRandomPointNear(predictedPos, predictDistance);
+                }
 
-        // Расчет скорости курсора
-        float speed = (float)Math.Sqrt(mouseVelocity.X * mouseVelocity.X + mouseVelocity.Y * mouseVelocity.Y);
-        
-        // Адаптивное прогнозирование - чем выше скорость, тем меньше время прогноза
-        float adaptivePredictionFactor = 1.0f / (1.0f + speed * 0.005f);
-        float effectivePredictionTime = PredictionTimeMs * adaptivePredictionFactor;
-        
-        // Ограничение дистанции предсказания
-        float predictDistance = Math.Min(speed * (effectivePredictionTime / 1000f), MaxGrabDistance * 0.7f);
-
-        // Прогнозируемая позиция с учетом направления
-        PointF predictedPos = new PointF(
-            currentMousePos.X + (speed > 0.1f ? mouseVelocity.X * (effectivePredictionTime / 1000f) : 0),
-            currentMousePos.Y + (speed > 0.1f ? mouseVelocity.Y * (effectivePredictionTime / 1000f) : 0)
-        );
-
-        // Обновление щупалец
-        for (int i = 0; i < SegmentCount; i++)
-        {
-            // Проверка расстояния до точки захвата
-            float distToTarget = Distance(currentMousePos, targetPoints[i]);
-
-            // Выбираем новую точку захвата при определенных условиях
-            if (distToTarget > DetachDistance || 
-                (speed > 20 && isMouseMoving && !wasPreviouslyMoving))
-            {
-                targetPoints[i] = GetRandomPointNear(predictedPos, predictDistance);
+                // Обновление точек щупальца
+                UpdateTentaclePoints(i, currentMousePos);
             }
 
-            // Обновление точек щупальца
-            UpdateTentaclePoints(i, currentMousePos);
+            this.Invalidate();
         }
-
-        this.Invalidate();
-    }
 
         private void UpdateTentaclePoints(int tentacleIndex, PointF startPoint)
         {
@@ -410,13 +414,33 @@ namespace TentacleOverlay
 
         private PointF GetRandomPointNear(PointF center, float radius)
         {
-            double angle = random.NextDouble() * 2 * Math.PI;
-            double distance = random.NextDouble() * radius;
-
-            return new PointF(
-                center.X + (float)(Math.Cos(angle) * distance),
-                center.Y + (float)(Math.Sin(angle) * distance)
-            );
+            // Если есть скорость, учитываем направление движения
+            if (Math.Abs(mouseVelocity.X) > 0.1f || Math.Abs(mouseVelocity.Y) > 0.1f)
+            {
+                float speed = (float)Math.Sqrt(mouseVelocity.X * mouseVelocity.X + mouseVelocity.Y * mouseVelocity.Y);
+                float dirX = mouseVelocity.X / speed;
+                float dirY = mouseVelocity.Y / speed;
+        
+                // Генерируем точку в полукруге в направлении движения
+                double angle = Math.Atan2(dirY, dirX) + (random.NextDouble() - 0.5) * Math.PI;
+                double distance = random.NextDouble() * radius;
+        
+                return new PointF(
+                    center.X + (float)(Math.Cos(angle) * distance),
+                    center.Y + (float)(Math.Sin(angle) * distance)
+                );
+            }
+            else
+            {
+                // Если движения нет, генерируем точку в любом направлении
+                double angle = random.NextDouble() * 2 * Math.PI;
+                double distance = random.NextDouble() * radius;
+        
+                return new PointF(
+                    center.X + (float)(Math.Cos(angle) * distance),
+                    center.Y + (float)(Math.Sin(angle) * distance)
+                );
+            }
         }
 
         private float Distance(PointF a, PointF b)
