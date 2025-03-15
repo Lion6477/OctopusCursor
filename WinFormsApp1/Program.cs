@@ -261,7 +261,9 @@ namespace TentacleOverlay
 
                 // Выбираем новую точку захвата при определенных условиях
                 if (distToTarget > DetachDistance || 
-                    (speed > 20 && isMouseMoving && !wasPreviouslyMoving))
+                    (speed > 15 && Vector2Distance(
+                        new PointF(mouseVelocity.X, mouseVelocity.Y),
+                        new PointF(targetPoints[i].X - currentMousePos.X, targetPoints[i].Y - currentMousePos.Y)) > Math.PI/2))
                 {
                     targetPoints[i] = GetRandomPointNear(predictedPos, predictDistance);
                 }
@@ -271,6 +273,14 @@ namespace TentacleOverlay
             }
 
             this.Invalidate();
+        }
+
+        private float Vector2Distance(PointF a, PointF b)
+        {
+            float dot = a.X * b.X + a.Y * b.Y;
+            float magA = (float)Math.Sqrt(a.X * a.X + a.Y * a.Y);
+            float magB = (float)Math.Sqrt(b.X * b.X + b.Y * b.Y);
+            return (float)Math.Acos(dot / (magA * magB + 0.0001f));
         }
 
         private void UpdateTentaclePoints(int tentacleIndex, PointF startPoint)
@@ -414,33 +424,22 @@ namespace TentacleOverlay
 
         private PointF GetRandomPointNear(PointF center, float radius)
         {
-            // Если есть скорость, учитываем направление движения
-            if (Math.Abs(mouseVelocity.X) > 0.1f || Math.Abs(mouseVelocity.Y) > 0.1f)
-            {
-                float speed = (float)Math.Sqrt(mouseVelocity.X * mouseVelocity.X + mouseVelocity.Y * mouseVelocity.Y);
-                float dirX = mouseVelocity.X / speed;
-                float dirY = mouseVelocity.Y / speed;
-        
-                // Генерируем точку в полукруге в направлении движения
-                double angle = Math.Atan2(dirY, dirX) + (random.NextDouble() - 0.5) * Math.PI;
-                double distance = random.NextDouble() * radius;
-        
-                return new PointF(
-                    center.X + (float)(Math.Cos(angle) * distance),
-                    center.Y + (float)(Math.Sin(angle) * distance)
-                );
-            }
-            else
-            {
-                // Если движения нет, генерируем точку в любом направлении
-                double angle = random.NextDouble() * 2 * Math.PI;
-                double distance = random.NextDouble() * radius;
-        
-                return new PointF(
-                    center.X + (float)(Math.Cos(angle) * distance),
-                    center.Y + (float)(Math.Sin(angle) * distance)
-                );
-            }
+            // Всегда генерируем точку впереди курсора
+            float speed = (float)Math.Sqrt(mouseVelocity.X * mouseVelocity.X + mouseVelocity.Y * mouseVelocity.Y);
+    
+            // Базовое направление - вперед по ходу движения
+            float dirX = speed > 0.1f ? mouseVelocity.X / speed : random.Next(-100, 100) / 100f;
+            float dirY = speed > 0.1f ? mouseVelocity.Y / speed : random.Next(-100, 100) / 100f;
+    
+            // Угол с отклонением вперед по ходу движения (от -60° до +60°)
+            double baseAngle = Math.Atan2(dirY, dirX);
+            double angle = baseAngle + (random.NextDouble() - 0.5) * Math.PI * 2/3;
+            double distance = random.NextDouble() * radius;
+    
+            return new PointF(
+                center.X + (float)(Math.Cos(angle) * distance),
+                center.Y + (float)(Math.Sin(angle) * distance)
+            );
         }
 
         private float Distance(PointF a, PointF b)
