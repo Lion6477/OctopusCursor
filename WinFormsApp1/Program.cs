@@ -16,17 +16,14 @@ namespace TentacleOverlay
 
     public class TentacleForm : Form
     {
-        // Параметры щупалец
-        private const int SegmentCount = 10;         // Количество щупалец
+        // Базовые параметры щупалец
+        private const int SegmentCount = 10;          // Количество щупалец
         private const int PointsPerTentacle = 80;     // Точки для каждого щупальца
-        private const float SegmentLength = 30f;     // Длина сегмента
-        private const float SmoothSpeed = 0.15f;     // Скорость сглаживания
-        private const float WobbleAmplitude = 0;   // Амплитуда колебания
-        private const float WobbleFrequency = 0;    // Частота колебания
-        private const float MaxGrabDistance = 300f;  // Максимальное расстояние захвата
-        private const float DetachDistance = 350f;   // Расстояние отцепления
-        private const float PredictionTimeMs = 500f; // Время предсказания движения (мс)
-        private const float GravityEffect = 0.1f;    // Эффект гравитации (провисание)
+        private const float SegmentLength = 30f;      // Длина сегмента
+        private const float SmoothSpeed = 0.15f;      // Скорость сглаживания
+        private const float MaxGrabDistance = 300f;   // Максимальное расстояние захвата
+        private const float DetachDistance = 350f;    // Расстояние отцепления
+        private const float PredictionTimeMs = 500f;  // Время предсказания движения (мс)
 
         // Профили обновления экрана (FPS)
         private enum RefreshProfile
@@ -39,7 +36,69 @@ namespace TentacleOverlay
             FPS240 = 4    // ~240 FPS
         }
 
+        // Настраиваемые параметры
+        private enum WobbleIntensity
+        {
+            None = 0,
+            Low = 1,
+            Medium = 2,
+            High = 3,
+            VeryHigh = 4
+        }
+
+        private enum GravityIntensity
+        {
+            VeryLow = 1,
+            Low = 2,
+            Medium = 3,
+            High = 4,
+            VeryHigh = 5
+        }
+
+        private enum TentacleStyle
+        {
+            Tapered,           // Сужающееся щупальце
+            Uniform,           // Монотонная толщина
+            TaperedWithTip     // Сужающееся с наконечником
+        }
+
+        // Настройки по умолчанию
         private RefreshProfile currentProfile = RefreshProfile.FPS165;
+        private WobbleIntensity wobbleIntensity = WobbleIntensity.None;
+        private bool wobbleWhileIdle = false;
+        private GravityIntensity gravityIntensity = GravityIntensity.Medium;
+        private TentacleStyle tentacleStyle = TentacleStyle.Tapered;
+
+        // Рассчитываемые параметры на основе настроек
+        private float wobbleAmplitude => wobbleIntensity switch
+        {
+            WobbleIntensity.None => 0f,
+            WobbleIntensity.Low => 5f,
+            WobbleIntensity.Medium => 10f,
+            WobbleIntensity.High => 15f,
+            WobbleIntensity.VeryHigh => 25f,
+            _ => 0f
+        };
+
+        private float wobbleFrequency => wobbleIntensity switch
+        {
+            WobbleIntensity.None => 0f,
+            WobbleIntensity.Low => 1f,
+            WobbleIntensity.Medium => 2f,
+            WobbleIntensity.High => 3f,
+            WobbleIntensity.VeryHigh => 4f,
+            _ => 0f
+        };
+
+        private float gravityEffect => gravityIntensity switch
+        {
+            GravityIntensity.VeryLow => 0.05f,
+            GravityIntensity.Low => 0.1f,
+            GravityIntensity.Medium => 0.2f,
+            GravityIntensity.High => 0.3f,
+            GravityIntensity.VeryHigh => 0.4f,
+            _ => 0.2f
+        };
         
         private PointF[] targetPoints;    // Точки захвата
         private PointF[][] tentaclePoints; // Точки щупалец
@@ -47,6 +106,7 @@ namespace TentacleOverlay
         private PointF mouseVelocity;     // Скорость движения мыши
         private DateTime lastUpdateTime;  // Время последнего обновления
         private Random random;            // Генератор случайных чисел
+        private bool isMouseMoving;       // Флаг движения мыши
 
         private Timer updateTimer;        // Таймер обновления
 
@@ -70,6 +130,7 @@ namespace TentacleOverlay
             mouseVelocity = new PointF(0, 0);
             lastUpdateTime = DateTime.Now;
             random = new Random();
+            isMouseMoving = false;
 
             // Инициализация точек захвата
             targetPoints = new PointF[SegmentCount];
@@ -140,6 +201,10 @@ namespace TentacleOverlay
             DateTime currentTime = DateTime.Now;
             float deltaTime = (float)(currentTime - lastUpdateTime).TotalSeconds;
             
+            // Определяем, движется ли мышь
+            bool wasPreviouslyMoving = isMouseMoving;
+            isMouseMoving = !(currentMousePos.X == lastMousePos.X && currentMousePos.Y == lastMousePos.Y);
+            
             if (deltaTime > 0)
             {
                 // Расчет скорости с небольшим сглаживанием
@@ -148,10 +213,17 @@ namespace TentacleOverlay
             }
             
             // Если мышь не двигается, обнуляем скорость
-            if (currentMousePos.X == lastMousePos.X && currentMousePos.Y == lastMousePos.Y)
+            if (!isMouseMoving)
             {
                 mouseVelocity.X *= 0.95f; // Плавное затухание
                 mouseVelocity.Y *= 0.95f;
+                
+                // Если скорость меньше порога, считаем что движения нет
+                if (Math.Abs(mouseVelocity.X) < 0.1f && Math.Abs(mouseVelocity.Y) < 0.1f)
+                {
+                    mouseVelocity.X = 0;
+                    mouseVelocity.Y = 0;
+                }
             }
             
             lastMousePos = currentMousePos;
@@ -159,6 +231,8 @@ namespace TentacleOverlay
 
             // Прогнозируемая позиция курсора
             float speed = (float)Math.Sqrt(mouseVelocity.X * mouseVelocity.X + mouseVelocity.Y * mouseVelocity.Y);
+            
+            // Фиксим слишком большое расстояние при быстром движении
             float predictDistance = Math.Min(speed * (PredictionTimeMs / 1000f), MaxGrabDistance);
             
             PointF predictedPos = new PointF(
@@ -196,17 +270,26 @@ namespace TentacleOverlay
                 float t = (float)i / (PointsPerTentacle - 1);
                 
                 // Добавляем провисание (эффект гравитации)
-                float gravityEffect = (float)Math.Sin(t * Math.PI) * GravityEffect;
+                float gravEffect = (float)Math.Sin(t * Math.PI) * gravityEffect;
                 
                 // Базовая точка с учетом гравитации
                 PointF basePoint = new PointF(
                     Lerp(startPoint.X, endPoint.X, t),
-                    Lerp(startPoint.Y, endPoint.Y, t) + gravityEffect * Distance(startPoint, endPoint)
+                    Lerp(startPoint.Y, endPoint.Y, t) + gravEffect * Distance(startPoint, endPoint)
                 );
                 
+                // Инициализируем амплитуду волны с учётом настроек
+                float currentWobbleAmplitude = wobbleAmplitude;
+                
+                // Если мышь не двигается и отключены волны в состоянии покоя
+                if (!isMouseMoving && !wobbleWhileIdle)
+                {
+                    currentWobbleAmplitude = 0;
+                }
+                
                 // Добавление волнообразного движения
-                float wavePhase = GetTime() * WobbleFrequency + tentacleIndex;
-                float waveAmplitude = WobbleAmplitude * (float)Math.Sin(t * Math.PI); // Максимум в середине
+                float wavePhase = GetTime() * wobbleFrequency + tentacleIndex;
+                float waveAmplitude = currentWobbleAmplitude * (float)Math.Sin(t * Math.PI); // Максимум в середине
                 
                 // Направление перпендикулярное к линии между начальной и конечной точками
                 float dx = endPoint.X - startPoint.X;
@@ -216,7 +299,12 @@ namespace TentacleOverlay
                 // Уменьшаем амплитуду когда скорость мыши близка к нулю
                 float speedFactor = (float)Math.Sqrt(mouseVelocity.X * mouseVelocity.X + mouseVelocity.Y * mouseVelocity.Y);
                 speedFactor = Math.Min(1.0f, speedFactor / 10.0f);
-                waveAmplitude *= speedFactor;
+                
+                // Если настроены волны в состоянии покоя, не уменьшаем их амплитуду
+                if (!wobbleWhileIdle)
+                {
+                    waveAmplitude *= speedFactor;
+                }
                 
                 // Нормализация и поворот на 90 градусов
                 if (length > 0.001f)
@@ -246,84 +334,4 @@ namespace TentacleOverlay
             base.OnPaint(e);
             
             Graphics g = e.Graphics;
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            
-            // Отрисовка щупалец
-            for (int i = 0; i < SegmentCount; i++)
-            {
-                // Градиент от голубого к синему (небесный)
-                Color startColor = Color.FromArgb(135, 206, 250); // LightSkyBlue
-                Color endColor = Color.FromArgb(65, 105, 225);    // RoyalBlue
-                
-                // Рисуем линии между точками
-                for (int j = 0; j < PointsPerTentacle - 1; j++)
-                {
-                    // Интерполяция цвета
-                    float t = (float)j / (PointsPerTentacle - 1);
-                    Color segmentColor = InterpolateColor(startColor, endColor, t);
-                    
-                    // Толщина линии уменьшается к концу
-                    float thickness = 5f * (1f - t * 0.7f);
-                    
-                    using (Pen pen = new Pen(segmentColor, thickness))
-                    {
-                        g.DrawLine(pen, tentaclePoints[i][j], tentaclePoints[i][j + 1]);
-                    }
-                }
-            }
-        }
-
-        private void ResetAllTargetPoints(PointF center)
-        {
-            for (int i = 0; i < SegmentCount; i++)
-            {
-                targetPoints[i] = GetRandomPointNear(center, MaxGrabDistance);
-            }
-        }
-
-        private PointF GetRandomPointNear(PointF center, float radius)
-        {
-            double angle = random.NextDouble() * 2 * Math.PI;
-            double distance = random.NextDouble() * radius;
-            
-            return new PointF(
-                center.X + (float)(Math.Cos(angle) * distance),
-                center.Y + (float)(Math.Sin(angle) * distance)
-            );
-        }
-
-        private float Distance(PointF a, PointF b)
-        {
-            float dx = a.X - b.X;
-            float dy = a.Y - b.Y;
-            return (float)Math.Sqrt(dx * dx + dy * dy);
-        }
-
-        private PointF Lerp(PointF a, PointF b, float t)
-        {
-            return new PointF(
-                a.X + (b.X - a.X) * t,
-                a.Y + (b.Y - a.Y) * t
-            );
-        }
-
-        private float Lerp(float a, float b, float t)
-        {
-            return a + (b - a) * t;
-        }
-
-        private Color InterpolateColor(Color a, Color b, float t)
-        {
-            return Color.FromArgb(
-                (int)(a.R + (b.R - a.R) * t),
-                (int)(a.G + (b.G - a.G) * t),
-                (int)(a.B + (b.B - a.B) * t)
-            );
-        }
-
-        private float GetTime()
-        {
-            return (float)(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalSeconds;
-        }
-    }
-}
+            g.Smo
