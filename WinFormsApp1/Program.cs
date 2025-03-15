@@ -1,7 +1,5 @@
-using System;
 using System.Diagnostics;
-using System.Drawing;
-using System.Windows.Forms;
+using Timer = System.Windows.Forms.Timer;
 
 namespace TentacleOverlay
 {
@@ -26,7 +24,7 @@ namespace TentacleOverlay
         private const float WobbleFrequency = 2f; // Частота «волнения»
 
         private PointF[] segments; // Позиции звеньев
-        private System.Windows.Forms.Timer updateTimer; // Таймер для обновления ~60 FPS
+        private Timer updateTimer; // Таймер для обновления ~60 FPS
 
         public TentacleForm()
         {
@@ -55,7 +53,7 @@ namespace TentacleOverlay
             }
 
             // Создаём таймер на ~60 FPS (16 мс)
-            updateTimer = new System.Windows.Forms.Timer();
+            updateTimer = new Timer();
             updateTimer.Interval = 16;
             updateTimer.Tick += UpdateTentacle;
             updateTimer.Start();
@@ -78,35 +76,26 @@ namespace TentacleOverlay
             // Позиция курсора в глобальных координатах экрана
             PointF mousePos = Cursor.Position;
 
-            // Первый сегмент плавно тянется к курсору
-            segments[0] = Lerp(segments[0], mousePos, SmoothSpeed);
-
-            // Для каждого последующего сегмента
-            for (int i = 1; i < SegmentCount; i++)
+            // Все сегменты теперь начинаются от курсора
+            for (int i = 0; i < SegmentCount; i++)
             {
-                // Направление от предыдущего сегмента к текущему
-                float dx = segments[i].X - segments[i - 1].X;
-                float dy = segments[i].Y - segments[i - 1].Y;
-                float dist = (float)Math.Sqrt(dx * dx + dy * dy);
-
-                // Нормализуем вектор
-                if (dist > 0.0001f)
-                {
-                    dx /= dist;
-                    dy /= dist;
-                }
-
-                // «Волна» на основе синуса времени
-                float noise = (float)Math.Sin((GetTime() + i) * WobbleFrequency) * WobbleAmplitude;
-
-                // Перпендикуляр к (dx, dy)
-                float px = -dy;
-                float py = dx;
-
+                // Рассчитываем угол для равномерного распределения сегментов
+                float angle = (float)(i * 2 * Math.PI / SegmentCount);
+        
+                // Добавляем шум к углу для естественного движения
+                float noiseAngle = angle + (float)Math.Sin((GetTime() + i) * WobbleFrequency) * 0.5f;
+        
+                // Вычисляем направление
+                float dx = (float)Math.Cos(noiseAngle);
+                float dy = (float)Math.Sin(noiseAngle);
+        
+                // Длина сегмента пропорциональна его номеру
+                float length = SegmentLength * (i + 1);
+        
                 // Целевая позиция для i-го сегмента
-                float targetX = segments[i - 1].X + dx * SegmentLength + px * noise;
-                float targetY = segments[i - 1].Y + dy * SegmentLength + py * noise;
-
+                float targetX = mousePos.X + dx * length;
+                float targetY = mousePos.Y + dy * length;
+        
                 // Плавное приближение к целевой позиции
                 PointF target = new PointF(targetX, targetY);
                 segments[i] = Lerp(segments[i], target, SmoothSpeed);
@@ -120,12 +109,15 @@ namespace TentacleOverlay
         {
             base.OnPaint(e);
 
-            // Пример отрисовки — синие линии толщиной 3
+            // Получаем текущую позицию курсора для рисования
+            PointF mousePos = Cursor.Position;
+
+            // Рисуем каждый сегмент от курсора
             using (Pen pen = new Pen(Color.Blue, 3f))
             {
-                for (int i = 0; i < SegmentCount - 1; i++)
+                for (int i = 0; i < SegmentCount; i++)
                 {
-                    e.Graphics.DrawLine(pen, segments[i], segments[i + 1]);
+                    e.Graphics.DrawLine(pen, mousePos, segments[i]);
                 }
             }
         }
