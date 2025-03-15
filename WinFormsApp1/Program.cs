@@ -196,71 +196,78 @@ namespace TentacleOverlay
         }
 
         private void UpdateTentacles(object sender, EventArgs e)
+    {
+        // Обновление скорости мыши
+        PointF currentMousePos = Cursor.Position;
+        DateTime currentTime = DateTime.Now;
+        float deltaTime = (float)(currentTime - lastUpdateTime).TotalSeconds;
+
+        // Определяем, движется ли мышь
+        bool wasPreviouslyMoving = isMouseMoving;
+        isMouseMoving = !(currentMousePos.X == lastMousePos.X && currentMousePos.Y == lastMousePos.Y);
+
+        if (deltaTime > 0)
         {
-            // Обновление скорости мыши
-            PointF currentMousePos = Cursor.Position;
-            DateTime currentTime = DateTime.Now;
-            float deltaTime = (float)(currentTime - lastUpdateTime).TotalSeconds;
-
-            // Определяем, движется ли мышь
-            bool wasPreviouslyMoving = isMouseMoving;
-            isMouseMoving = !(currentMousePos.X == lastMousePos.X && currentMousePos.Y == lastMousePos.Y);
-
-            if (deltaTime > 0)
-            {
-                // Расчет скорости с небольшим сглаживанием
-                mouseVelocity.X = (currentMousePos.X - lastMousePos.X) / deltaTime * 0.3f + mouseVelocity.X * 0.7f;
-                mouseVelocity.Y = (currentMousePos.Y - lastMousePos.Y) / deltaTime * 0.3f + mouseVelocity.Y * 0.7f;
-            }
-
-            // Если мышь не двигается, обнуляем скорость
-            if (!isMouseMoving)
-            {
-                mouseVelocity.X *= 0.95f; // Плавное затухание
-                mouseVelocity.Y *= 0.95f;
-
-                // Если скорость меньше порога, считаем что движения нет
-                if (Math.Abs(mouseVelocity.X) < 0.1f && Math.Abs(mouseVelocity.Y) < 0.1f)
-                {
-                    mouseVelocity.X = 0;
-                    mouseVelocity.Y = 0;
-                }
-            }
-
-            lastMousePos = currentMousePos;
-            lastUpdateTime = currentTime;
-
-            // Прогнозируемая позиция курсора
-            float speed = (float)Math.Sqrt(mouseVelocity.X * mouseVelocity.X + mouseVelocity.Y * mouseVelocity.Y);
-
-            // Фиксим слишком большое расстояние при быстром движении
-            float predictDistance = Math.Min(speed * (PredictionTimeMs / 1000f), MaxGrabDistance);
-
-            PointF predictedPos = new PointF(
-                currentMousePos.X +
-                (Math.Abs(mouseVelocity.X) > 0.1f ? mouseVelocity.X * (PredictionTimeMs / 1000f) : 0),
-                currentMousePos.Y +
-                (Math.Abs(mouseVelocity.Y) > 0.1f ? mouseVelocity.Y * (PredictionTimeMs / 1000f) : 0)
-            );
-
-            // Обновление щупалец
-            for (int i = 0; i < SegmentCount; i++)
-            {
-                // Проверка расстояния до точки захвата
-                float distToTarget = Distance(currentMousePos, targetPoints[i]);
-
-                // Если расстояние слишком большое, выбираем новую точку захвата
-                if (distToTarget > DetachDistance)
-                {
-                    targetPoints[i] = GetRandomPointNear(predictedPos, predictDistance);
-                }
-
-                // Обновление точек щупальца
-                UpdateTentaclePoints(i, currentMousePos);
-            }
-
-            this.Invalidate();
+            // Плавное сглаживание при быстрых движениях
+            float smoothFactor = Math.Min(0.7f, deltaTime * 10f);
+            float inputFactor = 1 - smoothFactor;
+            
+            mouseVelocity.X = (currentMousePos.X - lastMousePos.X) / deltaTime * inputFactor + mouseVelocity.X * smoothFactor;
+            mouseVelocity.Y = (currentMousePos.Y - lastMousePos.Y) / deltaTime * inputFactor + mouseVelocity.Y * smoothFactor;
         }
+
+        // Если мышь не двигается, обнуляем скорость
+        if (!isMouseMoving)
+        {
+            mouseVelocity.X *= 0.95f; // Плавное затухание
+            mouseVelocity.Y *= 0.95f;
+
+            // Если скорость меньше порога, считаем что движения нет
+            if (Math.Abs(mouseVelocity.X) < 0.1f && Math.Abs(mouseVelocity.Y) < 0.1f)
+            {
+                mouseVelocity.X = 0;
+                mouseVelocity.Y = 0;
+            }
+        }
+
+        lastMousePos = currentMousePos;
+        lastUpdateTime = currentTime;
+
+        // Расчет скорости курсора
+        float speed = (float)Math.Sqrt(mouseVelocity.X * mouseVelocity.X + mouseVelocity.Y * mouseVelocity.Y);
+        
+        // Адаптивное прогнозирование - чем выше скорость, тем меньше время прогноза
+        float adaptivePredictionFactor = 1.0f / (1.0f + speed * 0.005f);
+        float effectivePredictionTime = PredictionTimeMs * adaptivePredictionFactor;
+        
+        // Ограничение дистанции предсказания
+        float predictDistance = Math.Min(speed * (effectivePredictionTime / 1000f), MaxGrabDistance * 0.7f);
+
+        // Прогнозируемая позиция с учетом направления
+        PointF predictedPos = new PointF(
+            currentMousePos.X + (speed > 0.1f ? mouseVelocity.X * (effectivePredictionTime / 1000f) : 0),
+            currentMousePos.Y + (speed > 0.1f ? mouseVelocity.Y * (effectivePredictionTime / 1000f) : 0)
+        );
+
+        // Обновление щупалец
+        for (int i = 0; i < SegmentCount; i++)
+        {
+            // Проверка расстояния до точки захвата
+            float distToTarget = Distance(currentMousePos, targetPoints[i]);
+
+            // Выбираем новую точку захвата при определенных условиях
+            if (distToTarget > DetachDistance || 
+                (speed > 20 && isMouseMoving && !wasPreviouslyMoving))
+            {
+                targetPoints[i] = GetRandomPointNear(predictedPos, predictDistance);
+            }
+
+            // Обновление точек щупальца
+            UpdateTentaclePoints(i, currentMousePos);
+        }
+
+        this.Invalidate();
+    }
 
         private void UpdateTentaclePoints(int tentacleIndex, PointF startPoint)
         {
@@ -365,7 +372,7 @@ namespace TentacleOverlay
                 }
 
                 // Если форма с наконечником, рисуем круг на конце
-                if (currentShape == TentacleShape.TaperedWithTip)
+                if (tentacleStyle == TentacleStyle.TaperedWithTip)
                 {
                     Color tipColor = endColor;
                     float tipSize = 4f;
@@ -380,14 +387,14 @@ namespace TentacleOverlay
 
         private float GetThicknessForShape(float t)
         {
-            switch (currentShape)
+            switch (tentacleStyle) // было currentShape
             {
-                case TentacleShape.Tapered:
-                    return 5f * (1f - t * 0.7f); // Сужающееся (тоньше к концу)
-                case TentacleShape.Uniform:
-                    return 3f; // Постоянная толщина
-                case TentacleShape.TaperedWithTip:
-                    return 5f * (1f - t * 0.8f); // Чуть тоньше к концу для наконечника
+                case TentacleStyle.Tapered:
+                    return 5f * (1f - t * 0.7f);
+                case TentacleStyle.Uniform:
+                    return 3f;
+                case TentacleStyle.TaperedWithTip:
+                    return 5f * (1f - t * 0.8f);
                 default:
                     return 5f * (1f - t * 0.7f);
             }
