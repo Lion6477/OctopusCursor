@@ -16,113 +16,221 @@ namespace TentacleOverlay
 
     public class TentacleForm : Form
     {
-        // Параметры «тентакля»
-        private const int SegmentCount = 15;      // Количество сегментов
-        private const float SegmentLength = 30f;  // Длина между сегментами
-        private const float SmoothSpeed = 0.15f;  // Насколько быстро сегменты "догоняют"
-        private const float WobbleAmplitude = 10f;// Амплитуда «волнения»
-        private const float WobbleFrequency = 2f; // Частота «волнения»
+        // Параметры щупалец
+        private const int SegmentCount = 15;      // Количество щупалец
+        private const int PointsPerTentacle = 8;  // Точки для каждого щупальца
+        private const float SegmentLength = 30f;  // Длина сегмента
+        private const float SmoothSpeed = 0.15f;  // Скорость сглаживания
+        private const float WobbleAmplitude = 10f;// Амплитуда колебания
+        private const float WobbleFrequency = 2f; // Частота колебания
+        private const float MaxGrabDistance = 300f; // Максимальное расстояние захвата
+        private const float DetachDistance = 350f; // Расстояние отцепления
+        private const float PredictionTimeMs = 500f; // Время предсказания движения (мс)
 
-        private PointF[] segments; // Позиции звеньев
-        private Timer updateTimer; // Таймер для обновления ~60 FPS
+        private PointF[] targetPoints;    // Точки захвата
+        private PointF[][] tentaclePoints; // Точки щупалец
+        private PointF lastMousePos;      // Последняя позиция мыши
+        private PointF mouseVelocity;     // Скорость движения мыши
+        private DateTime lastUpdateTime;  // Время последнего обновления
+
+        private Timer updateTimer;        // Таймер обновления
 
         public TentacleForm()
         {
-            // ========= Настройки формы =========
-            // Без рамки, на весь экран, поверх всех окон
             this.FormBorderStyle = FormBorderStyle.None;
             this.WindowState = FormWindowState.Maximized;
             this.TopMost = true;
-            
-            // Делаем фон "ярко-зелёным" и прозрачным
             this.BackColor = Color.Lime;
             this.TransparencyKey = Color.Lime;
-            
-            // Не показывать в панели задач
             this.ShowInTaskbar = false;
-
-            // Включим двойную буферизацию, чтобы уменьшить мерцание
             this.DoubleBuffered = true;
 
-            // Инициализируем сегменты (все в начальной точке курсора)
-            Point startPos = Cursor.Position;
-            segments = new PointF[SegmentCount];
+            // Инициализация переменных
+            PointF startPos = Cursor.Position;
+            lastMousePos = startPos;
+            mouseVelocity = new PointF(0, 0);
+            lastUpdateTime = DateTime.Now;
+
+            // Инициализация точек захвата
+            targetPoints = new PointF[SegmentCount];
+            ResetAllTargetPoints(startPos);
+
+            // Инициализация точек щупалец
+            tentaclePoints = new PointF[SegmentCount][];
             for (int i = 0; i < SegmentCount; i++)
             {
-                segments[i] = startPos;
+                tentaclePoints[i] = new PointF[PointsPerTentacle];
+                for (int j = 0; j < PointsPerTentacle; j++)
+                {
+                    tentaclePoints[i][j] = startPos;
+                }
             }
 
-            // Создаём таймер на ~60 FPS (16 мс)
+            // Настройка таймера
             updateTimer = new Timer();
-            updateTimer.Interval = 16;
-            updateTimer.Tick += UpdateTentacle;
+            updateTimer.Interval = 44; // ~60 FPS
+            updateTimer.Tick += UpdateTentacles;
             updateTimer.Start();
         }
 
-        // Переопределяем стили окна, чтобы клик «проходил» насквозь (WS_EX_TRANSPARENT)
         protected override CreateParams CreateParams
         {
             get
             {
                 CreateParams cp = base.CreateParams;
                 cp.ExStyle |= 0x20;     // WS_EX_TRANSPARENT
-                cp.ExStyle |= 0x80000;  // WS_EX_LAYERED (для прозрачности)
+                cp.ExStyle |= 0x80000;  // WS_EX_LAYERED
                 return cp;
             }
         }
 
-        private void UpdateTentacle(object sender, EventArgs e)
+        private void UpdateTentacles(object sender, EventArgs e)
         {
-            // Позиция курсора в глобальных координатах экрана
-            PointF mousePos = Cursor.Position;
+            // Обновление скорости мыши
+            PointF currentMousePos = Cursor.Position;
+            DateTime currentTime = DateTime.Now;
+            float deltaTime = (float)(currentTime - lastUpdateTime).TotalSeconds;
+            
+            if (deltaTime > 0)
+            {
+                // Расчет скорости с небольшим сглаживанием
+                mouseVelocity.X = (currentMousePos.X - lastMousePos.X) / deltaTime * 0.3f + mouseVelocity.X * 0.7f;
+                mouseVelocity.Y = (currentMousePos.Y - lastMousePos.Y) / deltaTime * 0.3f + mouseVelocity.Y * 0.7f;
+            }
+            
+            lastMousePos = currentMousePos;
+            lastUpdateTime = currentTime;
 
-            // Все сегменты теперь начинаются от курсора
+            // Прогнозируемая позиция курсора
+            PointF predictedPos = new PointF(
+                currentMousePos.X + mouseVelocity.X * (PredictionTimeMs / 1000f),
+                currentMousePos.Y + mouseVelocity.Y * (PredictionTimeMs / 1000f)
+            );
+
+            // Обновление щупалец
             for (int i = 0; i < SegmentCount; i++)
             {
-                // Рассчитываем угол для равномерного распределения сегментов
-                float angle = (float)(i * 2 * Math.PI / SegmentCount);
-        
-                // Добавляем шум к углу для естественного движения
-                float noiseAngle = angle + (float)Math.Sin((GetTime() + i) * WobbleFrequency) * 0.5f;
-        
-                // Вычисляем направление
-                float dx = (float)Math.Cos(noiseAngle);
-                float dy = (float)Math.Sin(noiseAngle);
-        
-                // Длина сегмента пропорциональна его номеру
-                float length = SegmentLength * (i + 1);
-        
-                // Целевая позиция для i-го сегмента
-                float targetX = mousePos.X + dx * length;
-                float targetY = mousePos.Y + dy * length;
-        
-                // Плавное приближение к целевой позиции
-                PointF target = new PointF(targetX, targetY);
-                segments[i] = Lerp(segments[i], target, SmoothSpeed);
+                // Проверка расстояния до точки захвата
+                float distToTarget = Distance(currentMousePos, targetPoints[i]);
+                
+                // Если расстояние слишком большое, выбираем новую точку захвата
+                if (distToTarget > DetachDistance)
+                {
+                    targetPoints[i] = GetRandomPointNear(predictedPos, MaxGrabDistance);
+                }
+
+                // Обновление точек щупальца
+                UpdateTentaclePoints(i, currentMousePos);
             }
 
-            // Запрос перерисовки
             this.Invalidate();
+        }
+
+        private void UpdateTentaclePoints(int tentacleIndex, PointF startPoint)
+        {
+            PointF endPoint = targetPoints[tentacleIndex];
+            
+            // Расчет основных точек щупальца
+            for (int i = 0; i < PointsPerTentacle; i++)
+            {
+                // Интерполяция от начала к концу
+                float t = (float)i / (PointsPerTentacle - 1);
+                PointF basePoint = Lerp(startPoint, endPoint, t);
+                
+                // Добавление волнообразного движения
+                float wavePhase = GetTime() * WobbleFrequency + tentacleIndex;
+                float waveAmplitude = WobbleAmplitude * (float)Math.Sin(t * Math.PI); // Максимум в середине
+                
+                // Направление перпендикулярное к линии между начальной и конечной точками
+                float dx = endPoint.X - startPoint.X;
+                float dy = endPoint.Y - startPoint.Y;
+                float length = (float)Math.Sqrt(dx * dx + dy * dy);
+                
+                // Нормализация и поворот на 90 градусов
+                if (length > 0.001f)
+                {
+                    float nx = -dy / length;
+                    float ny = dx / length;
+                    
+                    // Применение волны
+                    float offset = waveAmplitude * (float)Math.Sin(wavePhase + t * 4 * Math.PI);
+                    PointF target = new PointF(
+                        basePoint.X + nx * offset,
+                        basePoint.Y + ny * offset
+                    );
+                    
+                    // Сглаживание движения
+                    tentaclePoints[tentacleIndex][i] = Lerp(tentaclePoints[tentacleIndex][i], target, SmoothSpeed);
+                }
+                else
+                {
+                    tentaclePoints[tentacleIndex][i] = basePoint;
+                }
+            }
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-
-            // Получаем текущую позицию курсора для рисования
-            PointF mousePos = Cursor.Position;
-
-            // Рисуем каждый сегмент от курсора
-            using (Pen pen = new Pen(Color.Blue, 3f))
+            
+            Graphics g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            
+            // Отрисовка щупалец
+            for (int i = 0; i < SegmentCount; i++)
             {
-                for (int i = 0; i < SegmentCount; i++)
+                // Градиент от синего к фиолетовому
+                Color startColor = Color.FromArgb(0, 100, 255);
+                Color endColor = Color.FromArgb(150, 0, 255);
+                
+                // Рисуем линии между точками
+                for (int j = 0; j < PointsPerTentacle - 1; j++)
                 {
-                    e.Graphics.DrawLine(pen, mousePos, segments[i]);
+                    // Интерполяция цвета
+                    float t = (float)j / (PointsPerTentacle - 1);
+                    Color segmentColor = InterpolateColor(startColor, endColor, t);
+                    
+                    // Толщина линии уменьшается к концу
+                    float thickness = 5f * (1f - t * 0.7f);
+                    
+                    using (Pen pen = new Pen(segmentColor, thickness))
+                    {
+                        g.DrawLine(pen, tentaclePoints[i][j], tentaclePoints[i][j + 1]);
+                    }
                 }
+                
+                // Рисуем точку захвата (для отладки)
+                //g.FillEllipse(Brushes.Red, targetPoints[i].X - 3, targetPoints[i].Y - 3, 6, 6);
             }
         }
 
-        // Линейная интерполяция между двумя точками
+        private void ResetAllTargetPoints(PointF center)
+        {
+            for (int i = 0; i < SegmentCount; i++)
+            {
+                targetPoints[i] = GetRandomPointNear(center, MaxGrabDistance);
+            }
+        }
+
+        private PointF GetRandomPointNear(PointF center, float radius)
+        {
+            Random random = new Random();
+            double angle = random.NextDouble() * 2 * Math.PI;
+            double distance = random.NextDouble() * radius;
+            
+            return new PointF(
+                center.X + (float)(Math.Cos(angle) * distance),
+                center.Y + (float)(Math.Sin(angle) * distance)
+            );
+        }
+
+        private float Distance(PointF a, PointF b)
+        {
+            float dx = a.X - b.X;
+            float dy = a.Y - b.Y;
+            return (float)Math.Sqrt(dx * dx + dy * dy);
+        }
+
         private PointF Lerp(PointF a, PointF b, float t)
         {
             return new PointF(
@@ -131,7 +239,15 @@ namespace TentacleOverlay
             );
         }
 
-        // Простая функция, считающая «время с начала работы процесса» (в секундах)
+        private Color InterpolateColor(Color a, Color b, float t)
+        {
+            return Color.FromArgb(
+                (int)(a.R + (b.R - a.R) * t),
+                (int)(a.G + (b.G - a.G) * t),
+                (int)(a.B + (b.B - a.B) * t)
+            );
+        }
+
         private float GetTime()
         {
             return (float)(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalSeconds;
